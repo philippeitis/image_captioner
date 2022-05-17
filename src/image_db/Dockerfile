@@ -22,6 +22,7 @@ FROM debian:bullseye-slim AS runtime
 COPY --from=builder /build/target/release/image_db /usr/local/bin
 
 ENV IMAGE_DB_PORT=8081
+ENV IMAGE_DB_IP=0.0.0.0
 # Can configure per-user later
 ENV MAX_FILE_SIZE_KB = 200000
 ENV DATABASE_URL = "images.db"
