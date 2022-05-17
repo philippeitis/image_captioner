@@ -94,33 +94,6 @@ pub mod files {
     }
 }
 
-// class Db:
-//     def __init__(self, db_path, image_root):
-//         self.image_root = image_root
-//         self.con = sqlite3.connect(db_path)
-//         self.cur = self.con.cursor()
-//         self.cur.execute("CREATE TABLE IF NOT EXISTS images (id INTEGER PRIMARY KEY, im_path)")
-//
-//     async def add_image(self, image: UploadFile) -> str:
-//         filename = Path(image.filename)
-//         ext = filename.suffix.lstrip(".")
-//         im_count = self.cur.fetchone("SELECT COUNT(*) FROM images")
-//         image_path = Path(self.image_root) / Path(f"{im_count}.{ext}")
-//         image_path.write_bytes(await image.read())
-//         self.cur.execute("INSERT INTO IMAGES VALUES (?, ?)", (image_path, ext))
-//         return str(self.cur.lastrowid)
-//
-//     async def read_image(self, image_id: str):
-//         self.cur.execute("SELECT image_path FROM images WHERE id = ?", (int(image_id),))
-//         image_path = self.cur.fetchone()
-//         if image_path is None:
-//             raise KeyError
-//         if Path(image_path).suffix.upper() == ".CR3":
-//             pass
-//         else:
-//             with rawpy.imread(image_path) as raw:
-//                 return raw.postprocess()
-
 pub struct SQLiteDatabase {
     connection: SqlitePool,
     image_upload_dir: PathBuf,

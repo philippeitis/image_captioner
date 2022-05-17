@@ -10,19 +10,14 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-// Need to provide the following:
-// GET /supported_ext: get supported file formats
-// POST /upload_image: upload image to db
-// GET /fetch_raw_image: get raw image
-// GET /fetch_image_png: get png format, with dims
-// GET /fetch_image_jpg: get jpg format, with dims and compression level
-// SQLite backed DB
 
 use crate::db::{fetch_raw, upload_raw, SQLiteDatabase};
 use crate::images::{fetch_jpg, fetch_png};
 use actix_web::{web, App, HttpServer};
 
-#[actix_web::main] // or #[tokio::main]
+// TODO: GET /supported_ext: get supported file formats
+
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let uri = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL.");
     let port = u16::from_str(&std::env::var("IMAGE_DB_PORT").expect("Missing DB port")).expect("DB not u16");
