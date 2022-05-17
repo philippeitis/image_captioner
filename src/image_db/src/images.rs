@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use libraw::Processor;
 
-use actix_web::{web, HttpResponse};
 use actix_web::web::Data;
+use actix_web::{web, HttpResponse};
 
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
@@ -61,8 +61,7 @@ async fn fetch_and_resize<'a>(
 
     // Create Resizer instance and resize source image
     // into buffer of destination image
-    let mut resizer =
-        fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom));
+    let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom));
     resizer.resize(&src_image.view(), &mut dst_view).unwrap();
     Some(dst_image)
 }
