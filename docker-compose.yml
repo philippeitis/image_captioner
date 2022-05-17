@@ -1,0 +1,63 @@
+version: "3.9"
+services:
+#  frontend:
+#    image: webui:latest
+#    env_file:
+#      - nlp.env
+#    build:
+#      context: ./src/webui/
+#      dockerfile: Dockerfile
+#    ports:
+#      - "${UI_SERVICE_PORT}:${UI_SERVICE_PORT}"
+#    environment:
+#      IMAGE_DB_URL: "http://image_db:${IMAGE_DB_PORT}"
+#      CAPTION_SERVICE_URL: "http://caption_service:${}"
+#    networks:
+#      - inner
+#    depends_on:
+#      - image_db
+#      - caption_service
+  image_db:
+    image: image_db:latest
+#    env_file:
+#      - nlp.env
+    build:
+      context: ./src/image_db/
+      dockerfile: Dockerfile
+    ports:
+      - "${IMAGE_DB_PORT}:${IMAGE_DB_PORT}"
+    volumes:
+#      - "uploaded_images:/uploaded_images/"
+      - "mounted_images:/mounted_images/"
+    networks:
+      - inner
+    environment:
+      IMAGE_DB_PORT: "8081"
+  caption_service:
+    image: quay.io/codait/max-image-caption-generator
+#  specifier_nlp:
+#    image: specifier_nlp:latest
+#    env_file:
+#      - nlp.env
+#    build:
+#      context: ./src/nlp/
+#      dockerfile: Dockerfile
+#    ports:
+#      - "${CORE_SERVICE_PORT}:${CORE_SERVICE_PORT}"
+#    volumes:
+#      - "nlp_specifier_cache:/server/cache/"
+#    networks:
+#      - inner
+#    environment:
+#      SRL_SERVICE_URL: "http://srl:80/srl"
+#      NER_SERVICE_URL: "http://ner:80/ner"
+networks:
+  inner:
+    name: "inner"
+volumes:
+    mounted_images:
+      driver: local
+      driver_opts:
+        o: bind
+        type: none
+        device: ./image_cache
