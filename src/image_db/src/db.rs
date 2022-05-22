@@ -2,24 +2,26 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroU32;
-
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
+use image::codecs::jpeg::JpegEncoder;
+use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 use actix_files::NamedFile;
 use actix_multipart::Multipart;
 use actix_web::web::{Data, Json};
 use actix_web::{web, Either, Error, HttpResponse};
-use image::codecs::jpeg::JpegEncoder;
-use image::ImageEncoder;
+use reqwest::Client;
 
-use crate::images::resize;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
-use tempfile::NamedTempFile;
+use tokio::task;
+
+use crate::images::resize;
 
 pub(crate) type Id = String;
 
@@ -107,134 +109,75 @@ pub struct SQLiteDatabase {
     path: PathBuf,
 }
 
-#[derive(Serialize)]
-struct WeaviateInput {
-    class: String,
-    properties: HashMap<String, String>,
+async fn insert_image(
+    id: String,
+    name: PathBuf,
+    mut file: NamedTempFile,
+    pool: SqlitePool,
+    client: Client,
+) -> sqlx::Result<Option<(String, PathBuf)>> {
+    #[derive(Serialize)]
+    struct WeaviateInput {
+        class: String,
+        properties: HashMap<String, String>,
+    }
+
+    let input = {
+        let mut properties = HashMap::new();
+        let mut bytes = Vec::new();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.read_to_end(&mut bytes).unwrap();
+        let image = resize(
+            &bytes,
+            NonZeroU32::try_from(600).unwrap(),
+            NonZeroU32::try_from(400).unwrap(),
+        )
+        .unwrap();
+
+        let mut buf = Vec::new();
+
+        JpegEncoder::new_with_quality(&mut buf, 70)
+            .write_image(
+                image.buffer(),
+                u32::from(image.width()),
+                u32::from(image.height()),
+                image::ColorType::Rgb8,
+            )
+            .unwrap();
+
+        properties.insert("image".to_string(), base64::encode(buf));
+
+        WeaviateInput {
+            class: "ClipImage".to_string(),
+            properties,
+        }
+    };
+
+    match file.persist(&name) {
+        Ok(_) => {}
+        Err(_) => {
+            return Ok(None);
+        }
+    }
+
+    client
+        .post("http://weaviate:8080/v1/objects")
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+
+    let name_bytes = name.as_os_str().as_bytes();
+    match sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, name_bytes)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => Ok(Some((id, name))),
+        Err(e) => Err(e),
+    }
 }
 
 impl SQLiteDatabase {
-    async fn store_images(
-        &self,
-        files: Vec<(NamedTempFile, String)>,
-    ) -> Result<Option<Vec<Id>>, sqlx::Error> {
-        use std::os::unix::ffi::OsStrExt;
-
-        let mut tx = self.connection.begin().await?;
-
-        let mut filenames = vec![];
-        let remove_persisted = |filenames: Vec<(Id, PathBuf)>| {
-            filenames
-                .into_iter()
-                .for_each(|(_, p)| drop(std::fs::remove_file(p)))
-        };
-
-        let client = reqwest::Client::new();
-
-        for (mut file, name) in files.into_iter() {
-            // TODO: Handle collisions (very important, can't risk overlap)
-            let id = uuid::Uuid::new_v4().to_string();
-            let name = match name.rsplit_once(".") {
-                None => continue,
-                // TODO: replace with correct mounted dir
-                Some((_, ext)) => {
-                    let mut root = std::path::PathBuf::from("./images");
-                    root.push(format!("{}.{}", id, ext));
-                    root
-                }
-            };
-
-            let input = {
-                let mut properties = HashMap::new();
-                let mut bytes = Vec::new();
-                file.seek(SeekFrom::Start(0)).unwrap();
-                file.read_to_end(&mut bytes).unwrap();
-                let image = resize(
-                    &bytes,
-                    NonZeroU32::try_from(600).unwrap(),
-                    NonZeroU32::try_from(400).unwrap(),
-                )
-                .unwrap();
-
-                let mut buf = Vec::new();
-
-                JpegEncoder::new_with_quality(&mut buf, 70)
-                    .write_image(
-                        image.buffer(),
-                        u32::from(image.width()),
-                        u32::from(image.height()),
-                        image::ColorType::Rgb8,
-                    )
-                    .unwrap();
-
-                properties.insert("image".to_string(), base64::encode(buf));
-
-                WeaviateInput {
-                    class: "ClipImage".to_string(),
-                    properties,
-                }
-            };
-
-            match file.persist(&name) {
-                Ok(_) => {}
-                Err(_) => {
-                    remove_persisted(filenames);
-                    return Ok(None);
-                }
-            }
-
-            client.post("http://weaviate:8080/v1/objects")
-                .timeout(Duration::from_millis(5000))
-                .json(&input)
-                .send()
-                .await
-                .unwrap();
-
-            let name_bytes = name.as_os_str().as_bytes();
-            match sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, name_bytes)
-                .execute(&mut tx)
-                .await
-            {
-                Ok(_) => {}
-                Err(e) => {
-                    remove_persisted(filenames);
-                    return Err(e);
-                }
-            }
-
-            filenames.push((id, name));
-        }
-
-        match tx.commit().await {
-            Ok(_) => Ok(Some(filenames.into_iter().map(|(id, _)| id).collect())),
-            Err(e) => {
-                remove_persisted(filenames);
-                Err(e)
-            }
-        }
-    }
-
-    async fn num_rows(&self) -> Result<u32, sqlx::Error> {
-        struct Count {
-            count: i32,
-        }
-        sqlx::query_as!(Count, "SELECT COUNT(id) as count FROM files")
-            .fetch_one(&self.connection)
-            .await
-            .map(|x| x.count as u32)
-    }
-
-    pub(crate) async fn get_path(&self, id: &str) -> Result<PathBuf, sqlx::Error> {
-        use std::os::unix::ffi::OsStringExt;
-        struct SqlxPath {
-            path: Vec<u8>,
-        }
-        sqlx::query_as!(SqlxPath, "SELECT path FROM files WHERE id = ?", id)
-            .fetch_one(&self.connection)
-            .await
-            .map(|x| OsString::from_vec(x.path).into())
-    }
-
     pub(crate) async fn open<P>(file_path: P, image_upload_dir: PathBuf) -> Result<Self, ()>
     where
         P: AsRef<std::path::Path> + Send + Sync,
@@ -272,5 +215,74 @@ impl SQLiteDatabase {
         }
 
         Ok(db)
+    }
+
+    async fn store_images(
+        &self,
+        files: Vec<(NamedTempFile, String)>,
+    ) -> Result<Option<Vec<Id>>, sqlx::Error> {
+        let client = reqwest::Client::new();
+        let mut tasks = vec![];
+        for (file, name) in files.into_iter() {
+            // TODO: Handle collisions (very important, can't risk overlap)
+            let id = uuid::Uuid::new_v4().to_string();
+            let name = match name.rsplit_once(".") {
+                None => continue,
+                // TODO: replace with correct mounted dir
+                Some((_, ext)) => {
+                    let mut root = std::path::PathBuf::from("./images");
+                    root.push(format!("{}.{}", id, ext));
+                    root
+                }
+            };
+
+            tasks.push(task::spawn(insert_image(
+                id,
+                name,
+                file,
+                self.connection.clone(),
+                client.clone(),
+            )))
+        }
+
+        let results: Vec<Result<Result<Option<(String, PathBuf)>, _>, _>> =
+            futures::future::join_all(tasks).await;
+        let target_len = results.len();
+        let successful: Vec<(Id, PathBuf)> = results
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter_map(Result::ok)
+            .filter_map(|x| x)
+            .collect();
+        if successful.len() != target_len {
+            successful
+                .into_iter()
+                .for_each(|(_, p)| drop(std::fs::remove_file(p)));
+
+            Ok(None)
+        } else {
+            Ok(Some(successful.into_iter().map(|(id, _)| id).collect()))
+        }
+    }
+
+    async fn num_rows(&self) -> Result<u32, sqlx::Error> {
+        struct Count {
+            count: i32,
+        }
+        sqlx::query_as!(Count, "SELECT COUNT(id) as count FROM files")
+            .fetch_one(&self.connection)
+            .await
+            .map(|x| x.count as u32)
+    }
+
+    pub(crate) async fn get_path(&self, id: &str) -> Result<PathBuf, sqlx::Error> {
+        use std::os::unix::ffi::OsStringExt;
+        struct SqlxPath {
+            path: Vec<u8>,
+        }
+        sqlx::query_as!(SqlxPath, "SELECT path FROM files WHERE id = ?", id)
+            .fetch_one(&self.connection)
+            .await
+            .map(|x| OsString::from_vec(x.path).into())
     }
 }

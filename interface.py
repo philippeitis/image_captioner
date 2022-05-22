@@ -2,7 +2,7 @@ import requests
 import weaviate
 
 from pathlib import Path
-import base64
+import time
 
 schema = {
     "classes": [{
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     db_url = "http://172.26.0.4:8081"
     Path("./preview").mkdir(exist_ok=True)
 
-    client = weaviate.Client("http://localhost:8080")  # or another location where your Weaviate instance is running
+    client = weaviate.Client("http://localhost:8080")
 
     try:
         client.schema.delete_class("ClipImage")
@@ -54,17 +54,11 @@ if __name__ == '__main__':
     client.schema.create(schema)
     print("Schema defined")
 
+    start = time.time()
     images = [(image.name, image.read_bytes()) for image in Path("./sample_images").iterdir() if image.is_file()]
     ids = requests.post(f"{db_url}/upload_raw", files=images).json()["ids"]
-
-    print("Images uploaded")
-    #
-    # for im_id, (image, _) in zip(ids, images):
-    #     jpg = requests.get(f"{db_url}/fetch_jpg?id={im_id}&width=600&height=400&quality=90", stream=True).content
-    #     print(image)
-    #
-    #     client.data_object.create({"image": base64.b64encode(jpg).decode("utf-8")}, "ClipImage", uuid=im_id)
-    #     (Path("./preview") / Path(image).with_suffix(".jpg")).write_bytes(jpg)
+    end = time.time()
+    print(f"Images uploaded in {end - start}s")
 
     query_result = client.query \
         .get("ClipImage", ["_additional {certainty id} "]) \
