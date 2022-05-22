@@ -33,24 +33,22 @@ services:
       - inner
     environment:
       IMAGE_DB_PORT: "8081"
-  caption_service:
-    image: quay.io/codait/max-image-caption-generator
-#  specifier_nlp:
-#    image: specifier_nlp:latest
-#    env_file:
-#      - nlp.env
-#    build:
-#      context: ./src/nlp/
-#      dockerfile: Dockerfile
-#    ports:
-#      - "${CORE_SERVICE_PORT}:${CORE_SERVICE_PORT}"
-#    volumes:
-#      - "nlp_specifier_cache:/server/cache/"
-#    networks:
-#      - inner
-#    environment:
-#      SRL_SERVICE_URL: "http://srl:80/srl"
-#      NER_SERVICE_URL: "http://ner:80/ner"
+  weaviate:
+    image: docker.io/semitechnologies/weaviate:1.9.0
+    ports:
+     - "8080:8080"
+    environment:
+      LOG_LEVEL: "debug"
+      QUERY_DEFAULTS_LIMIT: 20
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: "./data"
+      DEFAULT_VECTORIZER_MODULE: multi2vec-clip
+      CLIP_INFERENCE_API: "http://multi2vec-clip:8080"
+      ENABLE_MODULES: "multi2vec-clip"
+  multi2vec-clip:
+    image: semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32-multilingual-v1-783f3f9
+    environment:
+      ENABLE_CUDA: '1'
 networks:
   inner:
     name: "inner"
