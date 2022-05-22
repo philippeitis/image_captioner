@@ -33,10 +33,14 @@ services:
       - inner
     environment:
       IMAGE_DB_PORT: "8081"
+    depends_on:
+      - weaviate
   weaviate:
     image: docker.io/semitechnologies/weaviate:1.9.0
     ports:
      - "8080:8080"
+    networks:
+      - inner
     environment:
       LOG_LEVEL: "debug"
       QUERY_DEFAULTS_LIMIT: 20
@@ -47,11 +51,14 @@ services:
       ENABLE_MODULES: "multi2vec-clip"
   multi2vec-clip:
     image: semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32-multilingual-v1-783f3f9
+    networks:
+      - inner
     environment:
       ENABLE_CUDA: '1'
 networks:
   inner:
-    name: "inner"
+    name: inner
+    driver: bridge
 volumes:
     mounted_images:
       driver: local

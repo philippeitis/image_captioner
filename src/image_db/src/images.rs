@@ -41,9 +41,17 @@ async fn fetch_and_resize<'a>(
 ) -> Option<fast_image_resize::Image<'a>> {
     let path = data.get_path(&params.id).await.ok()?;
     let buf = std::fs::read(path).expect("read in");
+    resize(&buf, params.width, params.height)
+}
+
+pub fn resize<'a>(
+    buf: &[u8],
+    width: NonZeroU32,
+    height: NonZeroU32,
+) -> Option<fast_image_resize::Image<'a>> {
     let processor = Processor::new();
     let decoded = processor
-        .process_8bit(&buf)
+        .process_8bit(buf)
         .expect("decoding should succeed");
     let src_image = fr::Image::from_vec_u8(
         NonZeroU32::try_from(decoded.width()).expect("zero width"),
@@ -53,8 +61,7 @@ async fn fetch_and_resize<'a>(
     )
     .expect("Bad resize");
 
-    let mut dst_image =
-        fast_image_resize::Image::new(params.width, params.height, src_image.pixel_type());
+    let mut dst_image = fast_image_resize::Image::new(width, height, src_image.pixel_type());
 
     // Get mutable view of destination image data
     let mut dst_view = dst_image.view_mut();

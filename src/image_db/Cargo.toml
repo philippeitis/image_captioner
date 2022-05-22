@@ -24,3 +24,6 @@ sqlx = { version = "0.5.13", features = [ "runtime-tokio-native-tls", "sqlite", 
 libraw-rs = { git = "https://github.com/philippeitis/libraw-rs" }
 image = "0.24.2"
 fast_image_resize = "0.9.1"
+reqwest = { version = "0.11.10", features = [ "json" ] }
+base64 = "0.13.0"
+curl = "0.4.43"

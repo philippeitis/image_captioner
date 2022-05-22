@@ -1,7 +1,11 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::{Read, Seek, SeekFrom};
+use std::num::NonZeroU32;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +13,10 @@ use actix_files::NamedFile;
 use actix_multipart::Multipart;
 use actix_web::web::{Data, Json};
 use actix_web::{web, Either, Error, HttpResponse};
+use image::codecs::jpeg::JpegEncoder;
+use image::ImageEncoder;
 
+use crate::images::resize;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use tempfile::NamedTempFile;
@@ -100,6 +107,12 @@ pub struct SQLiteDatabase {
     path: PathBuf,
 }
 
+#[derive(Serialize)]
+struct WeaviateInput {
+    class: String,
+    properties: HashMap<String, String>,
+}
+
 impl SQLiteDatabase {
     async fn store_images(
         &self,
@@ -116,7 +129,9 @@ impl SQLiteDatabase {
                 .for_each(|(_, p)| drop(std::fs::remove_file(p)))
         };
 
-        for (file, name) in files.into_iter() {
+        let client = reqwest::Client::new();
+
+        for (mut file, name) in files.into_iter() {
             // TODO: Handle collisions (very important, can't risk overlap)
             let id = uuid::Uuid::new_v4().to_string();
             let name = match name.rsplit_once(".") {
@@ -129,6 +144,37 @@ impl SQLiteDatabase {
                 }
             };
 
+            let input = {
+                let mut properties = HashMap::new();
+                let mut bytes = Vec::new();
+                file.seek(SeekFrom::Start(0)).unwrap();
+                file.read_to_end(&mut bytes).unwrap();
+                let image = resize(
+                    &bytes,
+                    NonZeroU32::try_from(600).unwrap(),
+                    NonZeroU32::try_from(400).unwrap(),
+                )
+                .unwrap();
+
+                let mut buf = Vec::new();
+
+                JpegEncoder::new_with_quality(&mut buf, 70)
+                    .write_image(
+                        image.buffer(),
+                        u32::from(image.width()),
+                        u32::from(image.height()),
+                        image::ColorType::Rgb8,
+                    )
+                    .unwrap();
+
+                properties.insert("image".to_string(), base64::encode(buf));
+
+                WeaviateInput {
+                    class: "ClipImage".to_string(),
+                    properties,
+                }
+            };
+
             match file.persist(&name) {
                 Ok(_) => {}
                 Err(_) => {
@@ -136,6 +182,13 @@ impl SQLiteDatabase {
                     return Ok(None);
                 }
             }
+
+            client.post("http://weaviate:8080/v1/objects")
+                .timeout(Duration::from_millis(5000))
+                .json(&input)
+                .send()
+                .await
+                .unwrap();
 
             let name_bytes = name.as_os_str().as_bytes();
             match sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, name_bytes)

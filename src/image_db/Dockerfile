@@ -29,4 +29,7 @@ ENV IMAGE_DB_IP=0.0.0.0
 # Can configure per-user later
 ENV MAX_FILE_SIZE_KB = 200000
 ENV DATABASE_URL = "images.db"
+
+RUN apt-get update -y
+RUN apt-get install -y libcurl4-openssl-dev
 CMD ["/usr/local/bin/image_db"]

@@ -23,6 +23,23 @@ pub async fn health() -> HttpResponse {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    {
+        std::thread::sleep(std::time::Duration::from_millis(15000));
+        let mut dst = Vec::new();
+        let mut easy = curl::easy::Easy::new();
+        easy.url("http://weaviate:8080/v1/.well-known/openid-configuration").unwrap();
+        easy.get(true).unwrap();
+        {
+            let mut transfer = easy.transfer();
+            transfer.write_function(|data| {
+                dst.extend_from_slice(data);
+                Ok(data.len())
+            }).unwrap();
+            transfer.perform().unwrap();
+        }
+        println!("{}", String::from_utf8(dst.clone()).unwrap());
+    }
+
     let uri = std::env::var("DATABASE_URL").expect("Missing DATABASE_URL.");
     let ip = std::env::var("IMAGE_DB_IP").unwrap_or(String::from("127.0.0.1"));
     let port = u16::from_str(&std::env::var("IMAGE_DB_PORT").expect("Missing DB port"))
