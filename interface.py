@@ -57,6 +57,7 @@ if __name__ == '__main__':
     start = time.time()
     images = [(image.name, image.read_bytes()) for image in Path("./sample_images").iterdir() if image.is_file()]
     ids = requests.post(f"{db_url}/upload_raw", files=images).json()["ids"]
+    print(ids)
     end = time.time()
     print(f"Images uploaded in {end - start}s")
 

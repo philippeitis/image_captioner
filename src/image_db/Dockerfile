@@ -19,6 +19,9 @@ COPY ./.env .env
 RUN cargo build --release
 
 FROM debian:bullseye-slim AS runtime
+RUN apt-get update -y
+RUN apt-get install -y libcurl4-openssl-dev
+
 COPY --from=builder /build/target/release/image_db /usr/local/bin
 
 WORKDIR /
@@ -30,6 +33,4 @@ ENV IMAGE_DB_IP=0.0.0.0
 ENV MAX_FILE_SIZE_KB = 200000
 ENV DATABASE_URL = "images.db"
 
-RUN apt-get update -y
-RUN apt-get install -y libcurl4-openssl-dev
 CMD ["/usr/local/bin/image_db"]

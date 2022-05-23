@@ -36,9 +36,12 @@ pub async fn fetch_raw(
 ) -> Result<Either<NamedFile, HttpResponse>, Error> {
     let image = params.into_inner();
     match data.get_path(&image.id).await {
-        Ok(path) => Ok(Either::Left(NamedFile::open_async(path).await?)),
+        Ok(path) => {
+            println!("Successfully serving image with id {}", image.id);
+            Ok(Either::Left(NamedFile::open_async(path).await?))
+        },
         Err(_) => Ok(Either::Right(
-            HttpResponse::NotFound().body("image with id not found"),
+            HttpResponse::NotFound().body(format!("image with id {} not found", image.id)),
         )),
     }
 }
@@ -120,6 +123,7 @@ async fn insert_image(
     struct WeaviateInput {
         class: String,
         properties: HashMap<String, String>,
+        id: Id
     }
 
     let input = {
@@ -147,9 +151,11 @@ async fn insert_image(
 
         properties.insert("image".to_string(), base64::encode(buf));
 
+        println!("{}", id);
         WeaviateInput {
             class: "ClipImage".to_string(),
             properties,
+            id: id.clone()
         }
     };
 
