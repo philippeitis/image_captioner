@@ -28,3 +28,4 @@ fast_image_resize = "0.9.1"
 reqwest = { version = "0.11.10", features = [ "json" ] }
 base64 = "0.13.0"
 tokio = { version = "1.18.2", features = [ "sync" ] }
+rayon = "1.5.3"

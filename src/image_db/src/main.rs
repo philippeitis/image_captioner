@@ -6,10 +6,10 @@
 mod db;
 mod images;
 
+use actix_cors::Cors;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use actix_cors::Cors;
 
 use crate::db::{fetch_raw, upload_raw, SQLiteDatabase};
 use crate::images::{fetch_jpg, fetch_png};
