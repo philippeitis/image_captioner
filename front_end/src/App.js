@@ -1,6 +1,4 @@
 import React, {useState, useCallback} from 'react';
-import logo from './logo.svg';
-import downloadIcon from './save-file.svg';
 import ImageResult from "./ImageResult";
 
 const weaviate = require('weaviate-client');
@@ -11,7 +9,7 @@ const client = weaviate.client({
 });
 
 function App() {
-  const [results, setResults] = useState({});
+  const [results, setResults] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
 
   const onChange = event => {
@@ -27,7 +25,9 @@ function App() {
         .withFields('image _additional { id }')
         .withLimit(1)
         .do();
-      setResults(res);
+      const images = res["data"]["Get"]["ClipImage"];
+      console.log(images);
+      setResults(images.map(x => ({ id: x._additional.id , image: x.image })));
     }
 
     fetch();
@@ -63,7 +63,7 @@ function App() {
           </div>
         </div>
       </form>
-      {results.data && <ImageResult data={results['data']['Get']['ClipImage'][0]} />}
+      {results.length > 0 && <ImageResult id={results[0].id} image={results[0].image} />}
     </div>
   );
 }

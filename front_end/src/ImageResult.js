@@ -1,12 +1,11 @@
 import React from 'react';
-import downloadIcon from "./save-file.svg";
+import { ReactComponent as DownloadIcon } from './save-file.svg';
 
 class ImageResult extends React.Component {
     constructor(props) {
         super(props);
         console.log(props)
-        this.state = {id: props.data._additional.id, image: props.data.image};
-
+        this.state = {id: props.id, image: props.image};
         // This binding is necessary to make `this` work in the callback
         this.handleClick = this.handleClick.bind(this);
     }
@@ -25,7 +24,7 @@ class ImageResult extends React.Component {
             link.setAttribute('download', filename);
             document.body.appendChild(link);
             link.click();
-
+            URL.revokeObjectURL(url);
             // Clean up and remove the link
             link.parentNode.removeChild(link);
         });
@@ -34,7 +33,7 @@ class ImageResult extends React.Component {
     render() {
         return (
             <div>
-                <button onClick={this.handleClick}><img src={downloadIcon.default} alt="Download"/></button>
+                <div style= {{ marginBottom: "10px", display: "flex", justifyContent: "flex-end" }} onClick={this.handleClick}><DownloadIcon height="25px" width="25px"/></div>
                 <img
                     width="100%"
                     alt="Search Result"
