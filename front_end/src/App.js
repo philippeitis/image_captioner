@@ -1,5 +1,5 @@
 import React, {useState, useCallback} from 'react';
-import ImageResult from "./ImageResult";
+import logo from './logo.svg';
 
 const weaviate = require('weaviate-client');
 
@@ -9,15 +9,14 @@ const client = weaviate.client({
 });
 
 function App() {
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
 
   const onChange = event => {
     setSearchTerm(event.target.value);
   };
 
-  const fetch = useCallback(() => {
-    async function fetch() {
+  const fetch = useCallback(async () => {
       const res = await client.graphql
         .get()
         .withClassName('ClipImage')
@@ -25,12 +24,11 @@ function App() {
         .withFields('image _additional { id }')
         .withLimit(1)
         .do();
-      const images = res["data"]["Get"]["ClipImage"];
+      const images = res["data"]["Get"]["ClipImage"]
+          .map(x => ({ id: x._additional.id , image: x.image }));
       console.log(images);
-      setResults(images.map(x => ({ id: x._additional.id , image: x.image })));
-    }
 
-    fetch();
+      setResults(images);
   }, [searchTerm]);
 
   const onSubmit = event => {
@@ -44,26 +42,35 @@ function App() {
         onSubmit={onSubmit}
         style={{marginTop: '50px', marginBottom: '50px'}}
       >
-        <div class="field has-addons">
-          <div class="control is-expanded">
+        <div className="field has-addons">
+          <div className="control is-expanded">
             <input
-              class="input is-large"
+              className="input is-large"
               type="text"
               placeholder="Search for images"
               onChange={onChange}
             />
           </div>
-          <div class="control">
+          <div className="control">
             <input
               type="submit"
-              class="button is-info is-large"
+              className="button is-info is-large"
               value="Search"
               style={{backgroundColor: '#fa0171'}}
             />
           </div>
         </div>
       </form>
-      {results.length > 0 && <ImageResult id={results[0].id} image={results[0].image} />}
+      {results.length > 0 && (
+        <img
+          width="100%"
+          alt="Multi-Modal Search Result"
+          src={
+            'data:image/jpg;base64,' +
+            results[0].image
+          }
+        />
+      )}
     </div>
   );
 }

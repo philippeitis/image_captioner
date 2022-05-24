@@ -4,14 +4,12 @@ import { ReactComponent as DownloadIcon } from './save-file.svg';
 class ImageResult extends React.Component {
     constructor(props) {
         super(props);
-        console.log(props)
-        this.state = {id: props.id, image: props.image};
         // This binding is necessary to make `this` work in the callback
         this.handleClick = this.handleClick.bind(this);
     }
 
     handleClick() {
-        const link = `http://localhost:8081/fetch_raw?id=${this.state.id}`;
+        const link = `http://localhost:8081/fetch_raw?id=${this.props.id}`;
         console.log(link);
         fetch(link).then(async response => {
             const url = window.URL.createObjectURL(new Blob([await response.blob()]));
@@ -39,7 +37,7 @@ class ImageResult extends React.Component {
                     alt="Search Result"
                     src={
                         'data:image/jpg;base64,' +
-                        this.state.image
+                        this.props.image
                     }
                 />
             </div>
