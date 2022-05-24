@@ -1,5 +1,5 @@
 import React, {useState, useCallback} from 'react';
-import logo from './logo.svg';
+import ImageResult from "./ImageResult";
 
 const weaviate = require('weaviate-client');
 
@@ -61,16 +61,7 @@ function App() {
           </div>
         </div>
       </form>
-      {results.length > 0 && (
-        <img
-          width="100%"
-          alt="Multi-Modal Search Result"
-          src={
-            'data:image/jpg;base64,' +
-            results[0].image
-          }
-        />
-      )}
+      {results.length > 0 && <ImageResult id={results[0].id} image={results[0].image} />}
     </div>
   );
 }
