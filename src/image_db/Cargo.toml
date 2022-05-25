@@ -6,6 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+dotenvy = "0.15.1"
+
 serde = { version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 
@@ -19,7 +21,7 @@ uuid = { version = "1.0.0", features = ["v4"] }
 # Database
 tempfile = "3.3.0"
 sqlx = { version = "0.5.13", features = [ "runtime-tokio-native-tls", "sqlite", "macros" ] }
-
+ron = "0.7.0"
 
 # Image processing
 libraw-rs = { git = "https://github.com/philippeitis/libraw-rs" }

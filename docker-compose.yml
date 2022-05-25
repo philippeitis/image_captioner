@@ -32,7 +32,11 @@ services:
     networks:
       - inner
     environment:
-      IMAGE_DB_PORT: "8081"
+      IMAGE_DB_ADDR: 0.0.0.0:8081
+      DATABASE_URL: "/data/db/images.db"
+      DATA_DIR: "/data/db/"
+      IMAGE_UPLOAD_DIR: "/data/uploaded_images/"
+      MOUNTED_IMAGE_DIR: ""
     depends_on:
       - weaviate
   weaviate:

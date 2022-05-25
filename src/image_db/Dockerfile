@@ -26,11 +26,13 @@ COPY --from=builder /build/target/release/image_db /usr/local/bin
 
 WORKDIR /
 
-RUN mkdir /images
-ENV IMAGE_DB_PORT=8081
-ENV IMAGE_DB_IP=0.0.0.0
+ENV IMAGE_DB_ADDR=0.0.0.0:8081
+ENV DATA_DIR = "/data/db/"
+ENV DATABASE_URL = "/data/db/images.db"
+ENV UPLOAD_DIR = "/data/uploaded_images/"
+ENV MOUNTED_IMAGE_DIR = ""
+
 # Can configure per-user later
 ENV MAX_FILE_SIZE_KB = 200000
-ENV DATABASE_URL = "images.db"
 
 CMD ["/usr/local/bin/image_db"]
