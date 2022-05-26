@@ -27,16 +27,16 @@ services:
     ports:
       - "${IMAGE_DB_PORT}:${IMAGE_DB_PORT}"
     volumes:
-#      - "uploaded_images:/uploaded_images/"
-      - "mounted_images:/mounted_images/"
+      - "./data/:/data/"
+      - "${MOUNTED_IMAGE_SOURCE_DIR}:/${MOUNTED_IMAGE_DIR}/:ro"
     networks:
       - inner
     environment:
-      IMAGE_DB_ADDR: 0.0.0.0:8081
+      IMAGE_DB_ADDR: "0.0.0.0:8081"
       DATABASE_URL: "/data/db/images.db"
       DATA_DIR: "/data/db/"
       IMAGE_UPLOAD_DIR: "/data/uploaded_images/"
-      MOUNTED_IMAGE_DIR: ""
+      MOUNTED_IMAGE_DIR: $MOUNTED_IMAGE_DIR
     depends_on:
       - weaviate
   weaviate:
@@ -63,10 +63,3 @@ networks:
   inner:
     name: inner
     driver: bridge
-volumes:
-    mounted_images:
-      driver: local
-      driver_opts:
-        o: bind
-        type: none
-        device: ./image_cache

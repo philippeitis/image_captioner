@@ -52,14 +52,14 @@ pub fn resize<'a>(
     let processor = Processor::new();
     let decoded = processor
         .process_8bit(buf)
-        .expect("decoding should succeed");
+        .ok()?;
+
     let src_image = fr::Image::from_vec_u8(
         NonZeroU32::try_from(decoded.width()).expect("zero width"),
         NonZeroU32::try_from(decoded.height()).expect("zero height"),
         decoded.deref().to_vec(),
         fr::PixelType::U8x3,
-    )
-    .expect("Bad resize");
+    ).ok()?;
 
     let mut dst_image = fast_image_resize::Image::new(width, height, src_image.pixel_type());
 
@@ -69,7 +69,7 @@ pub fn resize<'a>(
     // Create Resizer instance and resize source image
     // into buffer of destination image
     let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::CatmullRom));
-    resizer.resize(&src_image.view(), &mut dst_view).unwrap();
+    resizer.resize(&src_image.view(), &mut dst_view).ok()?;
     Some(dst_image)
 }
 

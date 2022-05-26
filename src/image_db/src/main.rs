@@ -1,19 +1,22 @@
 #![deny(unused_must_use)]
-// #![deny(unused_imports)]
+#![deny(unused_imports)]
 #![deny(unused_attributes)]
 #![deny(unused_mut)]
 
 mod db;
 mod fs;
 mod images;
+mod weaviate_graphql;
 
 use actix_cors::Cors;
 use std::ffi::OsString;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::db::{fetch_raw, upload_raw, SQLiteDatabase};
 use crate::images::{fetch_jpg, fetch_png};
+use crate::weaviate_graphql::{MultiOperator, Operator, WeaviateWhere, WhereValue};
 use actix_web::{get, web, App, HttpResponse, HttpServer};
 
 // TODO: GET /supported_ext: get supported file formats
@@ -36,6 +39,13 @@ async fn main() -> std::io::Result<()> {
         let _ = std::fs::create_dir_all(dir);
     }
 
+    let data = web::Data::new(Arc::new(
+        SQLiteDatabase::open(db_url, upload_dir.into())
+            .await
+            .expect("Opening database failed"),
+    ));
+
+    println!("Database opened.");
     if !mount_dir.is_empty() {
         let fs_fingerprint_path = {
             let mut fs_fingerprint_path = PathBuf::from(data_dir);
@@ -50,19 +60,20 @@ async fn main() -> std::io::Result<()> {
         };
         let after = fs::FileSystem::deep_scan(&mount_dir).unwrap();
 
-        println!("{}", before.diff(&after, "./").added.len());
+        let diff = before.diff(&after, PathBuf::from(&mount_dir).parent().unwrap());
+
+        data.deref().remove_paths(&diff.removed).await.unwrap();
+
+        for chunk in diff.added.chunks(100) {
+            data.deref().add_paths(chunk).await.unwrap();
+        }
+        println!("Removed {} images, added {} images.", diff.removed.len(), diff.added.len());
 
         let _ = std::fs::create_dir_all(&fs_fingerprint_path.parent().unwrap());
         std::fs::write(fs_fingerprint_path, ron::to_string(&after).unwrap())?;
     }
 
     println!("All images mounted.");
-
-    let data = web::Data::new(Arc::new(
-        SQLiteDatabase::open(db_url, upload_dir.into())
-            .await
-            .expect("Opening database failed"),
-    ));
 
     println!("Opening application on {}", address);
     HttpServer::new(move || {
