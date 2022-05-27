@@ -26,6 +26,46 @@ pub async fn health() -> HttpResponse {
     HttpResponse::Ok().body("success")
 }
 
+async fn mount_images(
+    database: Arc<SQLiteDatabase>,
+    mount_dir: OsString,
+    data_dir: OsString,
+) -> std::io::Result<()> {
+    if !mount_dir.is_empty() {
+        let fs_fingerprint_path = {
+            let mut fs_fingerprint_path = PathBuf::from(&data_dir);
+            fs_fingerprint_path.push("fs_fingerprint.txt");
+            fs_fingerprint_path
+        };
+
+        let before = if let Ok(fs_fingerprint) = std::fs::read_to_string(&fs_fingerprint_path) {
+            ron::from_str(&fs_fingerprint).unwrap_or_default()
+        } else {
+            fs::FileSystem::default()
+        };
+        let after = fs::FileSystem::deep_scan(&mount_dir).unwrap();
+
+        let diff = before.diff(&after, PathBuf::from(&mount_dir).parent().unwrap());
+
+        database.remove_paths(&diff.removed).await.unwrap();
+
+        for chunk in diff.added.chunks(100) {
+            database.add_paths(chunk).await.unwrap();
+        }
+        println!(
+            "Removed {} images, added {} images.",
+            diff.removed.len(),
+            diff.added.len()
+        );
+
+        let _ = std::fs::create_dir_all(&fs_fingerprint_path.parent().unwrap());
+        std::fs::write(fs_fingerprint_path, ron::to_string(&after).unwrap())?;
+    }
+
+    println!("All images mounted.");
+    Ok(())
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let _ = dotenvy::dotenv();
@@ -46,35 +86,11 @@ async fn main() -> std::io::Result<()> {
     ));
 
     println!("Database opened.");
-    if !mount_dir.is_empty() {
-        let fs_fingerprint_path = {
-            let mut fs_fingerprint_path = PathBuf::from(data_dir);
-            fs_fingerprint_path.push("fs_fingerprint.txt");
-            fs_fingerprint_path
-        };
-
-        let before = if let Ok(fs_fingerprint) = std::fs::read_to_string(&fs_fingerprint_path) {
-            ron::from_str(&fs_fingerprint).unwrap_or_default()
-        } else {
-            fs::FileSystem::default()
-        };
-        let after = fs::FileSystem::deep_scan(&mount_dir).unwrap();
-
-        let diff = before.diff(&after, PathBuf::from(&mount_dir).parent().unwrap());
-
-        data.deref().remove_paths(&diff.removed).await.unwrap();
-
-        for chunk in diff.added.chunks(100) {
-            data.deref().add_paths(chunk).await.unwrap();
-        }
-        println!("Removed {} images, added {} images.", diff.removed.len(), diff.added.len());
-
-        let _ = std::fs::create_dir_all(&fs_fingerprint_path.parent().unwrap());
-        std::fs::write(fs_fingerprint_path, ron::to_string(&after).unwrap())?;
-    }
-
-    println!("All images mounted.");
-
+    tokio::task::spawn(mount_images(
+        data.deref().deref().clone(),
+        mount_dir.clone(),
+        data_dir.clone(),
+    ));
     println!("Opening application on {}", address);
     HttpServer::new(move || {
         App::new()
