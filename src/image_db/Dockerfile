@@ -9,7 +9,6 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /build/recipe.json recipe.json
-# Build dependencies - this is the caching Docker layer!
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY ./src src
@@ -19,6 +18,7 @@ COPY ./.env .env
 RUN cargo build --release
 
 FROM debian:bullseye-slim AS runtime
+# TODO: Identify what this installs to make dns work
 RUN apt-get update -y
 RUN apt-get install -y libcurl4-openssl-dev
 
