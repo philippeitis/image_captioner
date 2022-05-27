@@ -86,7 +86,7 @@ async fn main() -> std::io::Result<()> {
     ));
 
     println!("Database opened.");
-    tokio::task::spawn(mount_images(
+    tokio::spawn(mount_images(
         data.deref().deref().clone(),
         mount_dir.clone(),
         data_dir.clone(),
