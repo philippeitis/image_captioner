@@ -41,7 +41,7 @@ schema = {
 }
 
 if __name__ == '__main__':
-    db_url = "http://172.26.0.4:8081"
+    db_url = "http://localhost:8081"
     Path("./preview").mkdir(exist_ok=True)
 
     client = weaviate.Client("http://localhost:8080")
@@ -56,7 +56,7 @@ if __name__ == '__main__':
 
     start = time.time()
     images = [(image.name, image.read_bytes()) for image in Path("./sample_images").iterdir() if image.is_file()]
-    ids = requests.post(f"{db_url}/upload_raw", files=images).json()["ids"]
+    ids = requests.post(f"{db_url}/upload_raw", files=images).json()
     print(ids)
     end = time.time()
     print(f"Images uploaded in {end - start}s")

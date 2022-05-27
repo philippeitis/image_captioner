@@ -4,10 +4,9 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use libraw::Processor;
-
 use actix_web::web::Data;
 use actix_web::{web, HttpResponse};
+use libraw::{Processor, ThumbnailFormat};
 
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
@@ -44,22 +43,48 @@ async fn fetch_and_resize<'a>(
     resize(&buf, params.width, params.height)
 }
 
+pub fn preview<'b>(buf: &[u8]) -> Option<Vec<u8>> {
+    let processor = Processor::new();
+    match processor.thumbnail(buf) {
+        Ok(thumbnail) if thumbnail.format() == ThumbnailFormat::Jpeg => {
+            Some(thumbnail.deref().to_vec())
+        }
+        _ => {
+            let image = resize(
+                buf,
+                NonZeroU32::try_from(1200).unwrap(),
+                NonZeroU32::try_from(800).unwrap(),
+            )?;
+
+            let mut buf = Vec::new();
+            JpegEncoder::new_with_quality(&mut buf, 70)
+                .write_image(
+                    image.buffer(),
+                    u32::from(image.width()),
+                    u32::from(image.height()),
+                    image::ColorType::Rgb8,
+                )
+                .ok()?;
+            Some(buf)
+        }
+    }
+}
+
 pub fn resize<'a>(
     buf: &[u8],
     width: NonZeroU32,
     height: NonZeroU32,
 ) -> Option<fast_image_resize::Image<'a>> {
     let processor = Processor::new();
-    let decoded = processor
-        .process_8bit(buf)
-        .ok()?;
+    let decoded = processor.process_8bit(buf).ok()?;
 
     let src_image = fr::Image::from_vec_u8(
         NonZeroU32::try_from(decoded.width()).expect("zero width"),
         NonZeroU32::try_from(decoded.height()).expect("zero height"),
         decoded.deref().to_vec(),
         fr::PixelType::U8x3,
-    ).ok()?;
+    )
+    .ok()?;
 
     let mut dst_image = fast_image_resize::Image::new(width, height, src_image.pixel_type());
 
@@ -73,7 +98,6 @@ pub fn resize<'a>(
     Some(dst_image)
 }
 
-// https://github.com/Cykooz/fast_image_resize
 pub async fn fetch_png(
     data: Data<Arc<SQLiteDatabase>>,
     params: web::Query<ImageResize>,

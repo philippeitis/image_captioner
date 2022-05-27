@@ -1,12 +1,10 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
-use std::num::NonZeroU32;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use image::codecs::jpeg::JpegEncoder;
-use image::ImageEncoder;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -19,7 +17,7 @@ use actix_web::{web, Either, Error, HttpResponse};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-use crate::images::resize;
+use crate::images::preview;
 use crate::weaviate_graphql::{
     WeaviateBatchDelete, WeaviateBatchInput, WeaviateInput, WeaviateMatch,
 };
@@ -50,7 +48,8 @@ pub async fn fetch_raw(
 
 #[derive(Serialize)]
 pub struct UploadRawResponse {
-    ids: Vec<String>,
+    /// The path and corresponding id, if successfully generated
+    path_ids: HashMap<String, Option<Id>>,
 }
 
 // TODO: File size limits
@@ -64,7 +63,7 @@ pub async fn upload_raw(
         Ok(files) => {
             // TODO: time between read and use error
             match data.store_images(files).await {
-                Ok(Some(ids)) => Either::Right(Json(UploadRawResponse { ids })),
+                Ok(Some(path_ids)) => Either::Right(Json(UploadRawResponse { path_ids })),
                 _ => Either::Left(
                     HttpResponse::InternalServerError()
                         .content_type("text/plain")
@@ -101,6 +100,7 @@ pub mod files {
             while let Some(chunk) = field.next().await {
                 file.write_all(&chunk?)?;
             }
+
             files.push((file, field.name().to_string()));
         }
 
@@ -119,24 +119,8 @@ fn generate_preview(file: &mut std::fs::File) -> Option<String> {
     let mut bytes = Vec::new();
     file.seek(SeekFrom::Start(0)).ok()?;
     file.read_to_end(&mut bytes).ok()?;
-    let image = resize(
-        &bytes,
-        NonZeroU32::try_from(600).unwrap(),
-        NonZeroU32::try_from(400).unwrap(),
-    )?;
-
-    let mut buf = Vec::new();
-
-    JpegEncoder::new_with_quality(&mut buf, 70)
-        .write_image(
-            image.buffer(),
-            u32::from(image.width()),
-            u32::from(image.height()),
-            image::ColorType::Rgb8,
-        )
-        .ok()?;
-
-    Some(base64::encode(buf))
+    let bytes = preview(&bytes)?;
+    Some(base64::encode(&bytes))
 }
 
 impl SQLiteDatabase {
@@ -182,7 +166,7 @@ impl SQLiteDatabase {
         Ok(db)
     }
 
-    /// Deletes all items with
+    /// Deletes all items with the corresponding paths
     pub(crate) async fn remove_paths(&self, paths: &[PathBuf]) -> sqlx::Result<()> {
         struct SqlxId {
             id: Id,
@@ -227,30 +211,17 @@ impl SQLiteDatabase {
         tx.commit().await
     }
 
-    async fn add_entries(&self, entries: &[(Id, PathBuf)]) -> sqlx::Result<()> {
-        let mut tx = self.connection.begin().await?;
-
-        for (id, path) in entries.iter() {
-            let path_bytes = path.as_os_str().as_bytes();
-            sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, path_bytes)
-                .execute(&mut tx)
-                .await?;
-        }
-
-        tx.commit().await
-    }
-
     async fn store_images(
         &self,
         files: Vec<(NamedTempFile, String)>,
-    ) -> sqlx::Result<Option<Vec<Id>>> {
+    ) -> sqlx::Result<Option<HashMap<String, Option<Id>>>> {
         let mut image_files = vec![];
         let mut entries = vec![];
-        let num_files = files.len();
+        let mut path_map = HashMap::new();
         for (file, name) in files.into_iter() {
             // TODO: Handle collisions (very important, can't risk overlap)
             let id = uuid::Uuid::new_v4().to_string();
-            let name = match name.rsplit_once(".") {
+            let path = match name.rsplit_once(".") {
                 None => continue,
                 Some((_, ext)) => {
                     let mut root = self.image_upload_dir.clone();
@@ -258,7 +229,8 @@ impl SQLiteDatabase {
                     root
                 }
             };
-            let file = match file.persist(&name) {
+
+            let file = match file.persist(&path) {
                 Ok(file) => file,
                 Err(_) => {
                     drop(image_files);
@@ -268,24 +240,32 @@ impl SQLiteDatabase {
                     return Ok(None);
                 }
             };
-            entries.push((id, name));
+
+            path_map.insert(path.clone(), name);
+
+            entries.push((id, path));
             image_files.push(file);
         }
 
-        // TODO: Return (successful file & uuid) and unsuccessful files for more detailed user feedback
-        //  and for partial progress (because uploads are time-consuming)
-        match self.add_files(entries.clone(), image_files).await {
-            Ok(Some(ids)) if ids.len() == num_files => {
-                Ok(Some(ids))
-            },
-            x @ Ok(None) | x @ Err(_) => {
-                entries
+        match self.add_files(entries, image_files).await {
+            Ok(Some(ids)) => Ok(Some(
+                ids.into_iter()
+                    .map(|(path, id)| (path_map.remove(&path).unwrap(), id))
+                    .collect(),
+            )),
+            Err(e) => {
+                path_map
                     .into_iter()
-                    .for_each(|(_, file_name)| drop(std::fs::remove_file(file_name)));
-                return x;
+                    .for_each(|(path, _)| drop(std::fs::remove_file(path)));
+
+                return Err(e);
             }
-            _ => {
-                unimplemented!("")
+            Ok(None) => {
+                path_map
+                    .into_iter()
+                    .for_each(|(path, _)| drop(std::fs::remove_file(path)));
+
+                return Ok(None);
             }
         }
     }
@@ -293,7 +273,7 @@ impl SQLiteDatabase {
     pub(crate) async fn add_paths(
         &self,
         paths: &[PathBuf],
-    ) -> sqlx::Result<Option<Vec<Id>>> {
+    ) -> sqlx::Result<Option<HashMap<PathBuf, Option<Id>>>> {
         let mut image_files = vec![];
         let mut entries = vec![];
         for path in paths.iter() {
@@ -312,25 +292,56 @@ impl SQLiteDatabase {
         self.add_files(entries, image_files).await
     }
 
-    async fn add_files(&self, entries: Vec<(String, PathBuf)>, mut image_files: Vec<std::fs::File>) -> sqlx::Result<Option<Vec<Id>>> {
+    async fn add_entries(&self, entries: &HashMap<PathBuf, Option<Id>>) -> sqlx::Result<()> {
+        let mut tx = self.connection.begin().await?;
+
+        for (id, path) in entries
+            .iter()
+            .flat_map(|(path, id)| id.as_ref().map(|id| (id, path)))
+        {
+            let path_bytes = path.as_os_str().as_bytes();
+            sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, path_bytes)
+                .execute(&mut tx)
+                .await?;
+        }
+
+        tx.commit().await
+    }
+
+    async fn add_files(
+        &self,
+        entries: Vec<(Id, PathBuf)>,
+        mut image_files: Vec<std::fs::File>,
+    ) -> sqlx::Result<Option<HashMap<PathBuf, Option<Id>>>> {
         let start = std::time::Instant::now();
-        let previews: Vec<Option<String>> = image_files.par_iter_mut().map(generate_preview).collect();
-        let entries: Vec<_> = entries
+        let mut previews: HashMap<Id, String> = entries
+            .par_iter()
+            .map(|(id, _)| id)
+            .zip(image_files.par_iter_mut().map(generate_preview))
+            .flat_map(|(id, preview)| preview.map(|preview| (id.clone(), preview)))
+            .collect();
+        let entries: HashMap<_, _> = entries
             .into_iter()
-            .zip(previews.iter())
-            .flat_map(|(entry, preview)| preview.as_ref().map(|_| entry))
+            .map(|(id, path)| (path, previews.get(&id).as_ref().map(|_| id)))
             .collect();
 
-        println!("Generated {} previews in {}s", entries.len(), start.elapsed().as_secs_f32());
+        println!(
+            "Generated {} previews in {}s",
+            entries.len(),
+            start.elapsed().as_secs_f32()
+        );
+
         self.add_entries(&entries).await?;
 
         let objects = entries
-            .iter()
-            .zip(previews.into_iter().flatten())
-            .map(|((id, _), preview)| {
-                WeaviateInput::class("ClipImage".to_string())
-                    .id(id.clone())
-                    .property("image".to_string(), preview)
+            .values()
+            .flatten()
+            .flat_map(|id| {
+                previews.remove(id).map(|preview| {
+                    WeaviateInput::class("ClipImage".to_string())
+                        .id(id.clone())
+                        .property("image".to_string(), preview)
+                })
             })
             .collect();
 
@@ -341,7 +352,7 @@ impl SQLiteDatabase {
             .await
             .unwrap();
 
-        Ok(Some(entries.into_iter().map(|(id, _)| id).collect()))
+        Ok(Some(entries))
     }
 
     async fn num_rows(&self) -> Result<u32, sqlx::Error> {
