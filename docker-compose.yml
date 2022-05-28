@@ -38,11 +38,13 @@ services:
     image: docker.io/semitechnologies/weaviate:1.9.0
     networks:
       - inner
+    volumes:
+      - "./data/weaviate/:/data/weaviate/"
     environment:
       LOG_LEVEL: "debug"
       QUERY_DEFAULTS_LIMIT: 20
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-      PERSISTENCE_DATA_PATH: "./data"
+      PERSISTENCE_DATA_PATH: "/data/weaviate/"
       DEFAULT_VECTORIZER_MODULE: multi2vec-clip
       CLIP_INFERENCE_API: "http://multi2vec-clip:8080"
       ENABLE_MODULES: "multi2vec-clip"
