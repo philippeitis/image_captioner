@@ -66,6 +66,15 @@ async fn mount_images(
     Ok(())
 }
 
+async fn wait_until_weaviate_ready() {
+    let client = reqwest::Client::new();
+    while client.get("http://weaviate:8080/v1/.well_known/live").send().await.is_err() {
+        println!("weaviate backend not yet ready, waiting 5s.");
+        std::thread::sleep(std::time::Duration::from_millis(5000));
+    }
+    println!("weaviate backend live.");
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let _ = dotenvy::dotenv();
@@ -86,6 +95,9 @@ async fn main() -> std::io::Result<()> {
     ));
 
     println!("Database opened.");
+
+    wait_until_weaviate_ready().await;
+
     tokio::spawn(mount_images(
         data.deref().deref().clone(),
         mount_dir.clone(),
