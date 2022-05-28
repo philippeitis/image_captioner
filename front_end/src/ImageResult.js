@@ -31,7 +31,7 @@ class ImageResult extends React.Component {
     render() {
         return (
             <div>
-                <div style= {{ marginBottom: "10px", display: "flex", justifyContent: "flex-end" }} onClick={this.handleClick}><DownloadIcon height="25px" width="25px"/></div>
+                <div style= {{ marginBottom: "10px", display: "flex", justifyContent: "flex-end" }}><DownloadIcon height="25px" width="25px" onClick={this.handleClick}/></div>
                 <img
                     width="100%"
                     alt="Search Result"
