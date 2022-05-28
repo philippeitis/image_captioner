@@ -1,34 +1,29 @@
 version: "3.9"
 services:
-#  frontend:
-#    image: webui:latest
-#    env_file:
-#      - nlp.env
-#    build:
-#      context: ./src/webui/
-#      dockerfile: Dockerfile
-#    ports:
-#      - "${UI_SERVICE_PORT}:${UI_SERVICE_PORT}"
-#    environment:
-#      IMAGE_DB_URL: "http://image_db:${IMAGE_DB_PORT}"
-#      CAPTION_SERVICE_URL: "http://caption_service:${}"
-#    networks:
-#      - inner
-#    depends_on:
-#      - image_db
-#      - caption_service
+  reverse_proxy:
+    image: haproxy
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "443:443"
+    volumes:
+      - "./haproxy/:/usr/local/etc/haproxy/:ro"
+      - "./certs/:/etc/ssl/private/:ro"
+
+    networks:
+      - inner
+    depends_on:
+      - image_db
+      - weaviate
   image_db:
     image: image_db:latest
-#    env_file:
-#      - nlp.env
     build:
       context: ./src/image_db/
       dockerfile: Dockerfile
-    ports:
-      - "${IMAGE_DB_PORT}:${IMAGE_DB_PORT}"
     volumes:
       - "./data/:/data/"
       - "${MOUNTED_IMAGE_SOURCE_DIR}:/${MOUNTED_IMAGE_DIR}/:ro"
+      - "./front_end/build/:/static/:ro"
     networks:
       - inner
     environment:
@@ -41,8 +36,6 @@ services:
       - weaviate
   weaviate:
     image: docker.io/semitechnologies/weaviate:1.9.0
-    ports:
-     - "8080:8080"
     networks:
       - inner
     environment:

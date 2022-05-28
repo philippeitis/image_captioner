@@ -9,7 +9,7 @@ class ImageResult extends React.Component {
     }
 
     handleClick() {
-        const link = `http://localhost:8081/fetch_raw?id=${this.props.id}`;
+        const link = `https://localhost/fetch_raw?id=${this.props.id}`;
         console.log(link);
         fetch(link).then(async response => {
             const url = window.URL.createObjectURL(new Blob([await response.blob()]));

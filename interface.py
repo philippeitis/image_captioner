@@ -41,10 +41,10 @@ schema = {
 }
 
 if __name__ == '__main__':
-    db_url = "http://localhost:8081"
+    db_url = "https://localhost"
     Path("./preview").mkdir(exist_ok=True)
 
-    client = weaviate.Client("http://localhost:8080")
+    client = weaviate.Client("https://localhost")
 
     try:
         client.schema.delete_class("ClipImage")

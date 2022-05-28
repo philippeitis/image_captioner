@@ -4,8 +4,8 @@ import ImageResult from "./ImageResult";
 const weaviate = require('weaviate-client');
 
 const client = weaviate.client({
-  scheme: 'http',
-  host: 'localhost:8080',
+  scheme: 'https',
+  host: 'localhost',
 });
 
 function App() {
@@ -24,11 +24,15 @@ function App() {
         .withFields('image _additional { id }')
         .withLimit(1)
         .do();
-      const images = res["data"]["Get"]["ClipImage"]
-          .map(x => ({ id: x._additional.id , image: x.image }));
-      console.log(images);
+      if (res["data"] !== undefined) {
+          const images = res["data"]["Get"]["ClipImage"]
+              .map(x => ({id: x._additional.id, image: x.image}));
+          console.log(images);
+          setResults(images);
+      } else {
+          setResults([]);
+      }
 
-      setResults(images);
   }, [searchTerm]);
 
   const onSubmit = event => {

@@ -91,7 +91,9 @@ async fn main() -> std::io::Result<()> {
         mount_dir.clone(),
         data_dir.clone(),
     ));
+
     println!("Opening application on {}", address);
+
     HttpServer::new(move || {
         App::new()
             .wrap(Cors::permissive().expose_headers(["Content-Disposition"]))
@@ -116,6 +118,7 @@ async fn main() -> std::io::Result<()> {
                     .app_data(data.clone())
                     .route(web::get().to(fetch_raw)),
             )
+            .service(actix_files::Files::new("/", "/static").index_file("/static/index.html").show_files_listing())
     })
     .bind(address)?
     .run()
