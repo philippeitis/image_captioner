@@ -49,7 +49,12 @@ pub fn preview<'b>(buf: &[u8]) -> Option<Vec<u8>> {
         Ok(thumbnail) if thumbnail.format() == ThumbnailFormat::Jpeg => {
             Some(thumbnail.deref().to_vec())
         }
-        _ => {
+        thumbnail => {
+            if let Ok(thumbnail) = thumbnail {
+                if thumbnail.format() != ThumbnailFormat::Unknown {
+                    println!("Image had unsupported thumbnail format: {:?}", thumbnail.format());
+                }
+            }
             let image = resize(
                 buf,
                 NonZeroU32::try_from(1200).unwrap(),

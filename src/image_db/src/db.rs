@@ -12,7 +12,8 @@ use tempfile::NamedTempFile;
 use actix_files::NamedFile;
 use actix_multipart::Multipart;
 use actix_web::web::{Data, Json};
-use actix_web::{web, Either, Error, HttpResponse};
+use actix_web::{web, Either, HttpResponse};
+use md5::Digest;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -33,7 +34,7 @@ pub struct Image {
 pub async fn fetch_raw(
     data: Data<Arc<SQLiteDatabase>>,
     params: web::Query<Image>,
-) -> Result<Either<NamedFile, HttpResponse>, Error> {
+) -> actix_web::Result<Either<NamedFile, HttpResponse>> {
     let image = params.into_inner();
     match data.get_path(&image.id).await {
         Ok(path) => {
@@ -83,14 +84,13 @@ pub mod files {
     use std::io::Write;
 
     use actix_multipart::Multipart;
-    use actix_web::Error;
     use futures::{StreamExt, TryStreamExt};
 
     use tempfile::NamedTempFile;
 
     pub async fn save_payload(
         mut payload: Multipart,
-    ) -> Result<Vec<(NamedTempFile, String)>, Error> {
+    ) -> actix_web::Result<Vec<(NamedTempFile, String)>> {
         // iterate over multipart stream
         let mut files = vec![];
         while let Some(mut field) = payload.try_next().await? {
@@ -115,16 +115,49 @@ pub struct SQLiteDatabase {
     client: reqwest::Client,
 }
 
-fn generate_preview(file: &mut std::fs::File) -> Option<String> {
+fn image_metadata(file: &mut std::fs::File) -> Option<(Digest, String)> {
     let mut bytes = Vec::new();
     file.seek(SeekFrom::Start(0)).ok()?;
     file.read_to_end(&mut bytes).ok()?;
     let bytes = preview(&bytes)?;
-    Some(base64::encode(&bytes))
+    Some((md5::compute(&bytes), base64::encode(&bytes)))
 }
 
+#[derive(Debug)]
+pub enum Error {
+    Io(std::io::Error),
+    Sqlx(sqlx::Error),
+    Web(actix_web::Error),
+    Reqwest(reqwest::Error)
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Sqlx(e)
+    }
+}
+
+impl From<actix_web::Error> for Error {
+    fn from(e: actix_web::Error) -> Self {
+        Self::Web(e)
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Reqwest(e)
+    }
+}
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+type Result<T, E = Error> = std::result::Result<T, E>;
+
 impl SQLiteDatabase {
-    pub(crate) async fn open<P>(file_path: P, image_upload_dir: PathBuf) -> Result<Self, ()>
+    pub(crate) async fn open<P>(file_path: P, image_upload_dir: PathBuf) -> Result<Self>
     where
         P: AsRef<std::path::Path> + Send + Sync,
         Self: Sized,
@@ -132,7 +165,7 @@ impl SQLiteDatabase {
         let db_exists = file_path.as_ref().exists();
         if !db_exists {
             if let Some(path) = file_path.as_ref().parent() {
-                std::fs::create_dir_all(path).map_err(|_| ())?;
+                std::fs::create_dir_all(path)?;
             }
         }
         let database = SqlitePoolOptions::new()
@@ -141,8 +174,7 @@ impl SQLiteDatabase {
                     .filename(&file_path)
                     .create_if_missing(true),
             )
-            .await
-            .map_err(|_| ())?;
+            .await?;
 
         let db = Self {
             connection: database,
@@ -152,22 +184,21 @@ impl SQLiteDatabase {
         };
 
         for query in [
-            "CREATE TABLE IF NOT EXISTS `files` (`id` TEXT NOT NULL UNIQUE, `path` BLOB NOT NULL);",
+            "CREATE TABLE IF NOT EXISTS `files` (`id` TEXT NOT NULL UNIQUE, `md5` BLOB NOT NULL, `path` BLOB NOT NULL);",
             "CREATE INDEX IF NOT EXISTS file_ids ON files(id);",
-            // TODO: This should be replaced with a file hash
-            "CREATE INDEX IF NOT EXISTS paths ON files(path);",
+            "CREATE INDEX IF NOT EXISTS hashes ON files(md5);",
         ] {
             sqlx::query(query)
                 .execute(&db.connection)
-                .await
-                .map_err(|_| ())?;
+                .await?;
         }
 
         Ok(db)
     }
 
     /// Deletes all items with the corresponding paths
-    pub(crate) async fn remove_paths(&self, paths: &[PathBuf]) -> sqlx::Result<()> {
+    pub(crate) async fn remove_paths(&self, paths: &[PathBuf]) -> Result<()> {
+        // TODO: Search by hash
         struct SqlxId {
             id: Id,
         }
@@ -205,16 +236,15 @@ impl SQLiteDatabase {
                 },
             }))
             .send()
-            .await
-            .unwrap();
+            .await?;
 
-        tx.commit().await
+        Ok(tx.commit().await?)
     }
 
     async fn store_images(
         &self,
         files: Vec<(NamedTempFile, String)>,
-    ) -> sqlx::Result<Option<HashMap<String, Option<Id>>>> {
+    ) -> Result<Option<HashMap<String, Option<Id>>>> {
         let mut image_files = vec![];
         let mut entries = vec![];
         let mut path_map = HashMap::new();
@@ -250,7 +280,7 @@ impl SQLiteDatabase {
         match self.add_files(entries, image_files).await {
             Ok(Some(ids)) => Ok(Some(
                 ids.into_iter()
-                    .map(|(path, id)| (path_map.remove(&path).unwrap(), id))
+                    .map(|(path, id)| (path_map.remove(&path).unwrap(), id.map(|(_, id)| id)))
                     .collect(),
             )),
             Err(e) => {
@@ -273,7 +303,7 @@ impl SQLiteDatabase {
     pub(crate) async fn add_paths(
         &self,
         paths: &[PathBuf],
-    ) -> sqlx::Result<Option<HashMap<PathBuf, Option<Id>>>> {
+    ) -> Result<Option<HashMap<PathBuf, Option<(Digest, Id)>>>> {
         let mut image_files = vec![];
         let mut entries = vec![];
         for path in paths.iter() {
@@ -292,37 +322,50 @@ impl SQLiteDatabase {
         self.add_files(entries, image_files).await
     }
 
-    async fn add_entries(&self, entries: &HashMap<PathBuf, Option<Id>>) -> sqlx::Result<()> {
+    async fn add_entries(&self, mut entries: HashMap<PathBuf, Option<(Digest, Id)>>) -> Result<HashMap<PathBuf, Option<(Digest, Id)>>> {
         let mut tx = self.connection.begin().await?;
 
-        for (id, path) in entries
-            .iter()
-            .flat_map(|(path, id)| id.as_ref().map(|id| (id, path)))
+        for (path, digest_id) in entries
+            .iter_mut()
         {
+            let (digest, id) = if let Some(inner) = digest_id {
+                inner
+            } else {
+                continue;
+            };
+
+            let digest_bytes = digest.as_ref();
+            if sqlx::query!("SELECT * FROM files WHERE md5=?", digest_bytes).fetch_optional(&mut tx).await?.is_some() {
+                *digest_id = None;
+                continue;
+            }
+
+            let id = id.as_str();
             let path_bytes = path.as_os_str().as_bytes();
-            sqlx::query!("INSERT INTO files (id, path) VALUES(?, ?);", id, path_bytes)
+            sqlx::query!("INSERT INTO files (id, md5, path) VALUES(?, ?, ?);", id, digest_bytes, path_bytes)
                 .execute(&mut tx)
                 .await?;
         }
 
-        tx.commit().await
+        tx.commit().await?;
+        Ok(entries)
     }
 
     async fn add_files(
         &self,
         entries: Vec<(Id, PathBuf)>,
         mut image_files: Vec<std::fs::File>,
-    ) -> sqlx::Result<Option<HashMap<PathBuf, Option<Id>>>> {
+    ) -> Result<Option<HashMap<PathBuf, Option<(Digest, Id)>>>> {
         let start = std::time::Instant::now();
-        let mut previews: HashMap<Id, String> = entries
+        let mut metadata: HashMap<Id, (Digest, String)> = entries
             .par_iter()
             .map(|(id, _)| id)
-            .zip(image_files.par_iter_mut().map(generate_preview))
+            .zip(image_files.par_iter_mut().map(image_metadata))
             .flat_map(|(id, preview)| preview.map(|preview| (id.clone(), preview)))
             .collect();
         let entries: HashMap<_, _> = entries
             .into_iter()
-            .map(|(id, path)| (path, previews.get(&id).as_ref().map(|_| id)))
+            .map(|(id, path)| (path, metadata.get(&id).map(|(digest, _)| (digest.clone(), id))))
             .collect();
 
         println!(
@@ -331,13 +374,13 @@ impl SQLiteDatabase {
             start.elapsed().as_secs_f32()
         );
 
-        self.add_entries(&entries).await?;
+        let entries = self.add_entries(entries).await?;
 
         let objects = entries
             .values()
             .flatten()
-            .flat_map(|id| {
-                previews.remove(id).map(|preview| {
+            .flat_map(|(_, id)| {
+                metadata.remove(id).map(|(_, preview)| {
                     WeaviateInput::class("ClipImage".to_string())
                         .id(id.clone())
                         .property("image".to_string(), preview)
@@ -349,13 +392,12 @@ impl SQLiteDatabase {
             .post("http://weaviate:8080/v1/batch/objects")
             .json(&WeaviateBatchInput::new(objects))
             .send()
-            .await
-            .unwrap();
+            .await?;
 
         Ok(Some(entries))
     }
 
-    async fn num_rows(&self) -> Result<u32, sqlx::Error> {
+    async fn num_rows(&self) -> sqlx::Result<u32> {
         struct Count {
             count: i32,
         }
@@ -365,7 +407,7 @@ impl SQLiteDatabase {
             .map(|x| x.count as u32)
     }
 
-    pub(crate) async fn get_path(&self, id: &str) -> Result<PathBuf, sqlx::Error> {
+    pub(crate) async fn get_path(&self, id: &str) -> sqlx::Result<PathBuf> {
         use std::os::unix::ffi::OsStringExt;
         struct SqlxPath {
             path: Vec<u8>,

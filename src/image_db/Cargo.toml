@@ -22,6 +22,7 @@ tempfile = "3.3.0"
 sqlx = { version = "0.5.13", features = [ "runtime-tokio-native-tls", "sqlite", "macros" ] }
 uuid = { version = "1.0.0", features = ["v4"] }
 ron = "0.7.0"
+md5 = "0.7.0"
 
 # Image processing
 libraw-rs = { git = "https://github.com/philippeitis/libraw-rs" }
