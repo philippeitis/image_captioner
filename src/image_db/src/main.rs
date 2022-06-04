@@ -106,6 +106,26 @@ async fn main() -> std::io::Result<()> {
 
     wait_until_weaviate_ready().await;
 
+    {
+        let resp = reqwest::Client::new()
+            .post("http://weaviate:8080/v1/schema")
+            .body(
+                r#"{
+        "class": "ClipImage",
+        "vectorIndexType": "hnsw",
+        "vectorizer": "none",
+        "properties": []
+    }"#,
+            )
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await;
+
+        log::info!("{:?}", resp);
+    }
     // tokio::spawn(mount_images(
     //     data.deref().deref().clone(),
     //     mount_dir.clone(),

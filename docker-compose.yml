@@ -3,13 +3,10 @@ services:
   reverse_proxy:
     image: haproxy
     ports:
-      - "8080:8080"
-      - "8081:8081"
       - "443:443"
     volumes:
       - "./haproxy/:/usr/local/etc/haproxy/:ro"
       - "./certs/:/etc/ssl/private/:ro"
-
     networks:
       - inner
     depends_on:
@@ -51,8 +48,6 @@ services:
       ENABLE_MODULES: "multi2vec-clip"
   multi2vec-clip:
     image: semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32-multilingual-v1-783f3f9
-    ports:
-      - "9090:8080"
     networks:
       - inner
     environment:
