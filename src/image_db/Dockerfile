@@ -34,5 +34,6 @@ ENV MOUNTED_IMAGE_DIR = ""
 
 # Can configure per-user later
 ENV MAX_FILE_SIZE_KB = 200000
+ENV RUST_LOG = 1
 
 CMD ["/usr/local/bin/image_db"]

@@ -10,7 +10,7 @@ class ImageResult extends React.Component {
 
     handleClick() {
         const link = `https://localhost/fetch_raw?id=${this.props.id}`;
-        console.log(link);
+        console.log(link)
         fetch(link).then(async response => {
             const url = window.URL.createObjectURL(new Blob([await response.blob()]));
             const header = response.headers.get('Content-Disposition');
@@ -35,10 +35,7 @@ class ImageResult extends React.Component {
                 <img
                     width="100%"
                     alt="Search Result"
-                    src={
-                        'data:image/jpg;base64,' +
-                        this.props.image
-                    }
+                    src={`https://localhost/fetch_jpg?id=${this.props.id}&width=1200&height=800&quality=75`}
                 />
             </div>
         )

@@ -52,7 +52,10 @@ pub fn preview<'b>(buf: &[u8]) -> Option<Vec<u8>> {
         thumbnail => {
             if let Ok(thumbnail) = thumbnail {
                 if thumbnail.format() != ThumbnailFormat::Unknown {
-                    println!("Image had unsupported thumbnail format: {:?}", thumbnail.format());
+                    println!(
+                        "Image had unsupported thumbnail format: {:?}",
+                        thumbnail.format()
+                    );
                 }
             }
             let image = resize(

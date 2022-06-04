@@ -4,30 +4,16 @@ import weaviate
 from pathlib import Path
 import time
 
+import os
+os.environ["REQUESTS_CA_BUNDLE"] = './certs/test.pem'
+os.environ["SSL_CERT_FILE"] = './certs/test.pem'
+
 schema = {
     "classes": [{
         "class": "ClipImage",
-        "moduleConfig": {
-            "multi2vec-clip": {
-                "imageFields": [
-                    "image"
-                ],
-                # "textFields": [],
-                # "weights": {
-                #     "textFields": [0.],
-                #     "imageFields": [1.0]
-                # }
-            }
-        },
         "vectorIndexType": "hnsw",
-        "vectorizer": "multi2vec-clip",
+        "vectorizer": "none",
         "properties": [
-            {
-                "dataType": [
-                    "blob"
-                ],
-                "name": "image"
-            },
             # TODO: https://weaviate.io/developers/weaviate/current/data-schema/datatypes.html#datatype-geocoordinates
             # {
             #   "dataType": [
@@ -45,14 +31,14 @@ if __name__ == '__main__':
     Path("./preview").mkdir(exist_ok=True)
 
     client = weaviate.Client("https://localhost")
-
-    try:
-        client.schema.delete_class("ClipImage")
-        print("Schema deleted")
-    except weaviate.exceptions.UnexpectedStatusCodeException as e:
-        print(e)
-    client.schema.create(schema)
-    print("Schema defined")
+    #
+    # try:
+    #     client.schema.delete_class("ClipImage")
+    #     print("Schema deleted")
+    # except weaviate.exceptions.UnexpectedStatusCodeException as e:
+    #     print(e)
+    # client.schema.create(schema)
+    # print("Schema defined")
 
     start = time.time()
     images = [(image.name, image.read_bytes()) for image in Path("./sample_images").iterdir() if image.is_file()]

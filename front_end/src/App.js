@@ -1,13 +1,6 @@
 import React, {useState, useCallback} from 'react';
 import ImageResult from "./ImageResult";
 
-const weaviate = require('weaviate-client');
-
-const client = weaviate.client({
-  scheme: 'https',
-  host: 'localhost',
-});
-
 function App() {
   const [results, setResults] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -16,27 +9,18 @@ function App() {
     setSearchTerm(event.target.value);
   };
 
-  const fetch = useCallback(async () => {
-      const res = await client.graphql
-        .get()
-        .withClassName('ClipImage')
-        .withNearText({concepts: [searchTerm]})
-        .withFields('image _additional { id }')
-        .withLimit(1)
-        .do();
-      if (res["data"] !== undefined) {
-          const images = res["data"]["Get"]["ClipImage"]
-              .map(x => ({id: x._additional.id, image: x.image}));
-          console.log(images);
-          setResults(images);
+  const search = useCallback(async () => {
+      const res = await fetch(`https://localhost/near_text?text=${searchTerm}`);
+      if (res.ok) {
+          const response_json = await res.json();
+          setResults(response_json.ids);
       } else {
           setResults([]);
       }
-
   }, [searchTerm]);
 
   const onSubmit = event => {
-    fetch();
+    search();
     event.preventDefault();
   };
 
@@ -65,7 +49,7 @@ function App() {
           </div>
         </div>
       </form>
-      {results.length > 0 && <ImageResult id={results[0].id} image={results[0].image} />}
+      {results.length > 0 && <ImageResult id={results[0]} />}
     </div>
   );
 }

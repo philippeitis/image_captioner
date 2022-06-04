@@ -1,9 +1,12 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use itertools::Itertools;
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -20,15 +23,109 @@ use sqlx::SqlitePool;
 
 use crate::images::preview;
 use crate::weaviate_graphql::{
-    WeaviateBatchDelete, WeaviateBatchInput, WeaviateInput, WeaviateMatch,
+    QueryResult, VectorizerInput, VectorizerOutput, WeaviateBatchDelete, WeaviateBatchInput,
+    WeaviateInput, WeaviateMatch,
 };
 use crate::{MultiOperator, Operator, WeaviateWhere, WhereValue};
+
+const VECTOR_SEARCH_URL: &str = "http://weaviate:8080/v1/graphql";
+const BATCH_VECTOR_INSERT_URL: &str = "http://weaviate:8080/v1/batch/objects";
+const VECTORIZER_URL: &str = "http://multi2vec-clip:8080/vectorize/";
 
 pub(crate) type Id = String;
 
 #[derive(Deserialize)]
 pub struct Image {
     id: Id,
+}
+
+#[derive(Deserialize)]
+pub struct NearText {
+    text: String,
+}
+
+#[derive(Serialize)]
+pub struct NearTextOutput {
+    ids: Vec<Id>,
+}
+
+pub async fn near_text(
+    data: Data<Arc<SQLiteDatabase>>,
+    params: web::Query<NearText>,
+) -> HttpResponse {
+    async fn inner(
+        data: Data<Arc<SQLiteDatabase>>,
+        params: web::Query<NearText>,
+    ) -> Result<QueryResult> {
+        let text_vec = data
+            .vectorize(VectorizerInput {
+                texts: vec![params.into_inner().text],
+                images: vec![],
+            })
+            .await?
+            .text_vectors
+            .remove(0)
+            .iter()
+            .map(f32::to_string)
+            .join(", ");
+        let mut weaviate_request = HashMap::new();
+
+        let query = format!(
+            "{{
+    Get{{
+      ClipImage(
+        limit: 5,
+        nearVector: {{
+          vector: [{text_vec}]
+        }}
+      ){{
+        _additional {{
+          id
+          certainty
+        }}
+      }}
+    }}
+  }}"
+        );
+        log::info!("sending query: {}", query);
+        weaviate_request.insert("query", query);
+        Ok(data
+            .client
+            .post(VECTOR_SEARCH_URL)
+            .json(&weaviate_request)
+            .send()
+            .await?
+            .json()
+            .await?)
+    }
+
+    log::info!("Received request!");
+    match inner(data, params).await {
+        Ok(mut resp) => {
+            log::info!("{:?}", resp);
+            let ids = resp
+                .data
+                .get
+                .remove("ClipImage")
+                .unwrap()
+                .into_iter()
+                .map(|info| {
+                    info.additional
+                        .unwrap()
+                        .remove("id")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect();
+            HttpResponse::Ok().json(NearTextOutput { ids })
+        }
+        Err(e) => {
+            log::warn!("{:?}", e);
+            HttpResponse::InternalServerError().body("")
+        }
+    }
 }
 
 pub async fn fetch_raw(
@@ -128,7 +225,7 @@ pub enum Error {
     Io(std::io::Error),
     Sqlx(sqlx::Error),
     Web(actix_web::Error),
-    Reqwest(reqwest::Error)
+    Reqwest(reqwest::Error),
 }
 
 impl From<sqlx::Error> for Error {
@@ -196,6 +293,17 @@ impl SQLiteDatabase {
         Ok(db)
     }
 
+    async fn vectorize(&self, target: VectorizerInput<'_>) -> Result<VectorizerOutput> {
+        Ok(self
+            .client
+            .post(VECTORIZER_URL)
+            .json(&target)
+            .send()
+            .await?
+            .json()
+            .await?)
+    }
+
     /// Deletes all items with the corresponding paths
     pub(crate) async fn remove_paths(&self, paths: &[PathBuf]) -> Result<()> {
         // TODO: Search by hash
@@ -220,7 +328,7 @@ impl SQLiteDatabase {
         }
 
         self.client
-            .delete("http://weaviate:8080/v1/batch/objects")
+            .delete(BATCH_VECTOR_INSERT_URL)
             .json(&WeaviateBatchDelete::new(WeaviateMatch {
                 class: "ClipImage".to_string(),
                 where_: WeaviateWhere::Multiple {
@@ -322,12 +430,13 @@ impl SQLiteDatabase {
         self.add_files(entries, image_files).await
     }
 
-    async fn add_entries(&self, mut entries: HashMap<PathBuf, Option<(Digest, Id)>>) -> Result<HashMap<PathBuf, Option<(Digest, Id)>>> {
+    async fn add_entries(
+        &self,
+        mut entries: HashMap<PathBuf, Option<(Digest, Id)>>,
+    ) -> Result<HashMap<PathBuf, Option<(Digest, Id)>>> {
         let mut tx = self.connection.begin().await?;
 
-        for (path, digest_id) in entries
-            .iter_mut()
-        {
+        for (path, digest_id) in entries.iter_mut() {
             let (digest, id) = if let Some(inner) = digest_id {
                 inner
             } else {
@@ -335,16 +444,25 @@ impl SQLiteDatabase {
             };
 
             let digest_bytes = digest.as_ref();
-            if sqlx::query!("SELECT * FROM files WHERE md5=?", digest_bytes).fetch_optional(&mut tx).await?.is_some() {
+            if sqlx::query!("SELECT * FROM files WHERE md5=?", digest_bytes)
+                .fetch_optional(&mut tx)
+                .await?
+                .is_some()
+            {
                 *digest_id = None;
                 continue;
             }
 
             let id = id.as_str();
             let path_bytes = path.as_os_str().as_bytes();
-            sqlx::query!("INSERT INTO files (id, md5, path) VALUES(?, ?, ?);", id, digest_bytes, path_bytes)
-                .execute(&mut tx)
-                .await?;
+            sqlx::query!(
+                "INSERT INTO files (id, md5, path) VALUES(?, ?, ?);",
+                id,
+                digest_bytes,
+                path_bytes
+            )
+            .execute(&mut tx)
+            .await?;
         }
 
         tx.commit().await?;
@@ -357,7 +475,7 @@ impl SQLiteDatabase {
         mut image_files: Vec<std::fs::File>,
     ) -> Result<Option<HashMap<PathBuf, Option<(Digest, Id)>>>> {
         let start = std::time::Instant::now();
-        let mut metadata: HashMap<Id, (Digest, String)> = entries
+        let metadata: HashMap<Id, (Digest, String)> = entries
             .par_iter()
             .map(|(id, _)| id)
             .zip(image_files.par_iter_mut().map(image_metadata))
@@ -365,7 +483,12 @@ impl SQLiteDatabase {
             .collect();
         let entries: HashMap<_, _> = entries
             .into_iter()
-            .map(|(id, path)| (path, metadata.get(&id).map(|(digest, _)| (digest.clone(), id))))
+            .map(|(id, path)| {
+                (
+                    path,
+                    metadata.get(&id).map(|(digest, _)| (digest.clone(), id)),
+                )
+            })
             .collect();
 
         println!(
@@ -376,20 +499,34 @@ impl SQLiteDatabase {
 
         let entries = self.add_entries(entries).await?;
 
+        // two queries - vectorize images, then upload to db
+        let vectors = self
+            .vectorize(VectorizerInput {
+                texts: vec![],
+                images: metadata.values().map(|(_, im)| Cow::from(im)).collect(),
+            })
+            .await?;
+
+        let mut metadata: HashMap<_, _> = metadata
+            .into_iter()
+            .map(|(a, _)| a)
+            .zip(vectors.image_vectors.into_iter())
+            .collect();
+
         let objects = entries
             .values()
             .flatten()
             .flat_map(|(_, id)| {
-                metadata.remove(id).map(|(_, preview)| {
+                metadata.remove(id).map(|vector| {
                     WeaviateInput::class("ClipImage".to_string())
                         .id(id.clone())
-                        .property("image".to_string(), preview)
+                        .vector(vector)
                 })
             })
             .collect();
 
         self.client
-            .post("http://weaviate:8080/v1/batch/objects")
+            .post(BATCH_VECTOR_INSERT_URL)
             .json(&WeaviateBatchInput::new(objects))
             .send()
             .await?;

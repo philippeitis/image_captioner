@@ -32,6 +32,7 @@ services:
       DATA_DIR: "/data/db/"
       IMAGE_UPLOAD_DIR: "/data/uploaded_images/"
       MOUNTED_IMAGE_DIR: $MOUNTED_IMAGE_DIR
+      RUST_LOG: 'info'
     depends_on:
       - weaviate
   weaviate:
@@ -50,6 +51,8 @@ services:
       ENABLE_MODULES: "multi2vec-clip"
   multi2vec-clip:
     image: semitechnologies/multi2vec-clip:sentence-transformers-clip-ViT-B-32-multilingual-v1-783f3f9
+    ports:
+      - "9090:8080"
     networks:
       - inner
     environment:
